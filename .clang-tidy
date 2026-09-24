@@ -1,0 +1,32 @@
+---
+# Конфигурация линтера (clang-tidy). В CI проверяются только файлы,
+# изменённые в pull request (кроме каталогов tests/).
+# Локальный запуск: python3 .github/scripts/lint.py --base origin/master
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-reserved-identifier,
+  -bugprone-switch-missing-default-case,
+  -bugprone-unhandled-self-assignment,
+  clang-analyzer-*,
+  -clang-analyzer-optin.*,
+  performance-*,
+  -performance-enum-size,
+  -performance-avoid-endl,
+  misc-redundant-expression,
+  misc-unused-alias-decls,
+  misc-unused-using-decls,
+  modernize-use-nullptr,
+  modernize-use-override,
+  readability-misleading-indentation,
+  readability-container-size-empty,
+  readability-duplicate-include,
+  readability-redundant-control-flow
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/(allocator|associative_container|common)/.*'
+FormatStyle: none
+...

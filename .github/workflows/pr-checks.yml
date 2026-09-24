@@ -1,0 +1,124 @@
+# Проверки pull request: тесты затронутых библиотек + линтер.
+# Для защиты master в ruleset'е нужно сделать обязательными проверки «Tests» и «Lint»
+# (см. .github/rulesets/README.md).
+name: PR checks
+
+on:
+  pull_request:
+  # Ручной запуск (вкладка Actions) проверяет все лабораторные.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Исходный репозиторий курса. PR, которые подтягивают его обновления в форк, тестами не проверяются.
+  UPSTREAM_REPO: DesCaldnd/FIIT_SP
+  BOOST_PACKAGES: libboost-dev libboost-system-dev libboost-container-dev
+
+jobs:
+  changes:
+    name: Detect affected libraries
+    runs-on: ubuntu-24.04
+    outputs:
+      labs: ${{ steps.detect.outputs.labs }}
+      has_labs: ${{ steps.detect.outputs.has_labs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python3 .github/scripts/changed_labs.py --all --github-output
+          elif [ "$GITHUB_REPOSITORY" != "$UPSTREAM_REPO" ] && [ "$HEAD_REPO" = "$UPSTREAM_REPO" ]; then
+            echo "PR подтягивает обновления из $UPSTREAM_REPO — тесты не запускаются."
+            echo "labs=[]" >> "$GITHUB_OUTPUT"
+            echo "has_labs=false" >> "$GITHUB_OUTPUT"
+          else
+            python3 .github/scripts/changed_labs.py --base "$BASE_SHA" --head "$HEAD_SHA" --github-output
+          fi
+
+  test:
+    name: Test ${{ matrix.lab.name }}
+    needs: changes
+    if: needs.changes.outputs.has_labs == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        lab: ${{ fromJSON(needs.changes.outputs.labs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build $BOOST_PACKAGES
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.lab.target }}
+        run: cmake --build build --target "$TARGET"
+
+      - name: Run tests
+        env:
+          TARGET: ${{ matrix.lab.target }}
+        run: ctest --test-dir build --output-on-failure --no-tests=error --timeout 120 -R "^$TARGET\."
+
+  tests:
+    # Итоговая проверка, которую нужно сделать обязательной в ruleset'е.
+    name: Tests
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          TEST: ${{ needs.test.result }}
+        run: |
+          echo "changes: $CHANGES, test: $TEST"
+          if [ "$CHANGES" != "success" ] || { [ "$TEST" != "success" ] && [ "$TEST" != "skipped" ]; }; then
+            echo "::error::Тесты затронутых библиотек не прошли."
+            exit 1
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build clang-tidy $BOOST_PACKAGES
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run clang-tidy
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          clang-tidy --version
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            python3 .github/scripts/lint.py --all
+          else
+            python3 .github/scripts/lint.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          fi

@@ -1,0 +1,29 @@
+# Помечает красным коммиты, попавшие в master форка напрямую, а не через pull request.
+# Запретить такие пуши может только ruleset (см. .github/rulesets/README.md),
+# этот workflow лишь делает нарушение заметным.
+name: Master guard
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: Pushed via pull request
+    # В исходном репозитории курса не запускается.
+    if: github.repository != 'DesCaldnd/FIIT_SP'
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq 'map(select(.merged_at != null)) | length')
+          if [ "$prs" = "0" ]; then
+            echo "::error::Коммит $GITHUB_SHA попал в master без pull request. Изменения в master вносятся только через PR; настройте защиту ветки по инструкции из .github/rulesets/README.md."
+            exit 1
+          fi
+          echo "Коммит $GITHUB_SHA внесён через pull request."
